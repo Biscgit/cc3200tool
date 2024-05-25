@@ -310,7 +310,13 @@ parser_write_all_files.add_argument(
 
 
 def dll_data(fname):
-    return get_data('cc3200tool', os.path.join('dll', fname))
+    file = get_data('cc', os.sep.join(['dll', fname]))
+
+    if file is None:
+        raise ImportError(f"Failed to load ddl file {fname}")
+
+    logging.info(f"Loaded DDL file `{fname}`")
+    return file
 
 
 class CC3200Error(Exception):
@@ -1139,7 +1145,7 @@ class CC3200Connection(object):
         timeout = self.port.timeout
         if (alloc_size_effective > 200000):
             timeout = max(timeout, 5 * (
-                        (alloc_size_effective / 200000) + 1))  # empirical value is ~252925 bytes for 5 sec timeout
+                    (alloc_size_effective / 200000) + 1))  # empirical value is ~252925 bytes for 5 sec timeout
 
         log.info("Uploading file %s -> %s [%d, disk=%d]...",
                  local_file.name, cc_filename, alloc_size, alloc_size_effective)

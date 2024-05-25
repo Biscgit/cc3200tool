@@ -9,6 +9,32 @@ Copyright (C) 2020- Team RevvoX (0xbadbee, g3gg0)
 
 ![](https://img.shields.io/badge/license-GPL_2-green.svg "License")
 
+## Fork by Biscgit
+
+This fork is for fixing an issue with the loading of DDL files when running directly with `python3 cc.py` without having
+to install the programm.
+On the current version running the tool with the above command on Linux fails to load the DDL files.
+If you have encountered the following error (with traceback):
+
+```
+File ".../cc3200tool/cc.py", line 846, in _raw_write
+    while sent < len(data):
+    
+TypeError: object of type 'NoneType' has no len()
+```
+
+This fork should fix the issue.
+
+### The encountered (possible) issue
+
+The package's root path defined in the function `dll_data(fname)`
+(`cc3200tool/cc.py`, line 312) for loading the DDL modules is not correct when running the `cc.py` file directly.
+On not finding the file, the function `pkgutil.get_data(package, resource)` returns `None` which cannot be handled
+correctly in the `_raw_write` function (`cc3200tool/cc.py`, line 832) and raises an Exception.
+Since the other method of running did not work, we tried to run it directly and encountered this error (tested with
+python 3.12 on Linux 6.9.1).
+It is likely that the issue is not present when running with the shown method (which did not work for us).
+
 ## Rationale
 
 The only other tool which can officially do this is Uniflash, but good luck

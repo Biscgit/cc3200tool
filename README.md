@@ -35,6 +35,13 @@ Since the other method of running did not work, we tried to run it directly and 
 python 3.12 on Linux 6.9.1).
 It is likely that the issue is not present when running with the shown method (which did not work for us).
 
+### Use as Library
+You can now import this and use as library. 
+Simply pass the command to the main() function and it will do the rest. 
+On failing a command it will raise an Exception with the corresponding error code instead of exiting the program.
+You can now define the location from where the ddl files get loaded.
+You can also pass custom loggers for example to use with rich.
+
 ## Rationale
 
 The only other tool which can officially do this is Uniflash, but good luck

@@ -16,7 +16,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #
-
+import copy
 import sys
 import os
 import time
@@ -31,9 +31,10 @@ import json
 
 import serial
 
+lib_mode = False
+package_name = "cc"
+
 log = logging.getLogger()
-logging.basicConfig(stream=sys.stderr, level=logging.INFO,
-                    format="%(asctime)-15s -- %(message)s")
 
 CC3200_BAUD = 921600
 
@@ -87,6 +88,10 @@ SLFS_MODE_OPEN_READ = 0
 SLFS_MODE_OPEN_WRITE = 1
 SLFS_MODE_OPEN_CREATE = 2
 SLFS_MODE_OPEN_WRITE_CREATE_IF_NOT_EXIST = 3
+
+
+class ExitException(Exception):
+    pass
 
 
 def hexify(s):
@@ -310,12 +315,14 @@ parser_write_all_files.add_argument(
 
 
 def dll_data(fname):
-    file = get_data('cc', os.sep.join(['dll', fname]))
+    file = get_data(package_name, os.sep.join(['dll', fname]))
 
     if file is None:
         raise ImportError(f"Failed to load ddl file {fname}")
 
-    logging.info(f"Loaded DDL file `{fname}`")
+    if not lib_mode:
+        logging.info(f"Loaded DDL file `{fname}`")
+
     return file
 
 
@@ -719,7 +726,7 @@ class CC3200Connection(object):
             while True:
                 b = port.read(1)
                 if not b:
-                    log.error("timed out while waiting for ack")
+                    log.warning("timed out while waiting for ack")
                     return False
                 ack_bytes.append(b)
                 if len(ack_bytes) > 2:
@@ -901,9 +908,12 @@ class CC3200Connection(object):
             rx_data += self._read_chunk(offset + len(rx_data),
                                         min(chunk_size, size - len(rx_data)),
                                         storage_id)
-            sys.stderr.write('.')
-            sys.stderr.flush()
-        sys.stderr.write("\n")
+            if not lib_mode:
+                sys.stderr.write('.')
+                sys.stderr.flush()
+        if not lib_mode:
+            sys.stderr.write("\n")
+
         return rx_data
 
     def _exec_from_ram(self):
@@ -1365,107 +1375,137 @@ def split_argv(cmdline_args):
         yield args
 
 
-def main():
-    commands = []
-    for cmdargs in split_argv(sys.argv[1:]):
-        commands.append(parser.parse_args(cmdargs))
+def main(args: list[str] = None, console=None, p_path=None):
+    try:
+        if console:
+            global log
+            log = console
+            global lib_mode
+            lib_mode = True
 
-    if len(commands) == 0:
-        parser.print_help()
-        sys.exit(-1)
+        else:
+            logging.basicConfig(stream=sys.stderr, level=logging.INFO,
+                                format="%(asctime)-15s -- %(message)s")
 
-    args = commands[0]
+        if p_path:
+            global package_name
+            package_name = p_path
 
-    sop2_method = args.sop2
-    reset_method = args.reset
-    if sop2_method.pin == reset_method.pin and reset_method.pin != 'none':
-        log.error("sop2 and reset methods cannot be the same output pin")
-        sys.exit(-3)
+        commands = []
+        all_cmd_args = args or sys.argv[1:]
 
-    port_name = args.port
+        if args:
+            def custom_raiser(code: int, *_):
+                raise ExitException(code)
 
-    if not args.image_file is None:
-        cc = CC3200Connection(None, reset_method, sop2_method, erase_timeout=args.erase_timeout, device=args.device,
-                              image_file=args.image_file, output_file=args.output_file)
+            # replace all exits with raising exceptions
+            sys_backup = copy.deepcopy(sys.exit)
+            sys.exit = custom_raiser
 
-    else:
-        try:
-            p = serial.Serial(
-                port_name, baudrate=CC3200_BAUD, parity=serial.PARITY_NONE,
-                stopbits=serial.STOPBITS_ONE)
-        except (Exception,) as e:
-            log.warn("unable to open serial port %s: %s", port_name, e)
-            sys.exit(-2)
+        for cmdargs in split_argv(all_cmd_args):
+            commands.append(parser.parse_args(cmdargs))
 
-        cc = CC3200Connection(p, reset_method, sop2_method, erase_timeout=args.erase_timeout)
-        try:
-            cc.connect()
-            log.info("connected to target")
-        except (Exception,) as e:
-            log.error(f"Could not connect to target: {e}")
+        if len(commands) == 0:
+            parser.print_help()
+            sys.exit(-1)
+
+        args = commands[0]
+
+        sop2_method = args.sop2
+        reset_method = args.reset
+        if sop2_method.pin == reset_method.pin and reset_method.pin != 'none':
+            log.error("sop2 and reset methods cannot be the same output pin")
             sys.exit(-3)
 
-        log.info("Version: %s", cc.vinfo)
+        port_name = args.port
 
-        # TODO: sane error handling
+        if not args.image_file is None:
+            cc = CC3200Connection(None, reset_method, sop2_method, erase_timeout=args.erase_timeout, device=args.device,
+                                  image_file=args.image_file, output_file=args.output_file)
 
-        if cc.vinfo.is_cc3200:
-            log.info("This is a CC3200 device")
-            cc.switch_to_nwp_bootloader()
-            log.info("APPS version: %s", cc.vinfo_apps)
+        else:
+            try:
+                p = serial.Serial(
+                    port_name, baudrate=CC3200_BAUD, parity=serial.PARITY_NONE,
+                    stopbits=serial.STOPBITS_ONE)
+            except (Exception,) as e:
+                log.warn("unable to open serial port %s: %s", port_name, e)
+                sys.exit(-2)
 
-    check_fat = False
+            cc = CC3200Connection(p, reset_method, sop2_method, erase_timeout=args.erase_timeout)
+            try:
+                cc.connect()
+                log.info("connected to target")
+            except (Exception,) as e:
+                log.error(f"Could not connect to target: {e}")
+                sys.exit(-3)
 
-    for command in commands:
-        if command.cmd == "format_flash":
-            cc.format_slfs(command.size)
+            log.info("Version: %s", cc.vinfo)
 
-        if command.cmd == 'write_file':
-            use_api = True
-            if not command.image_file is None and not command.output_file is None:
-                use_api = False
-                cc.copy_input_file_to_output_file()
+            # TODO: sane error handling
 
-            cc.write_file(command.local_file, command.cc_filename, command.file_id,
-                          command.signature, command.file_size,
-                          command.commit_flag, use_api)
-            check_fat = True
+            if cc.vinfo.is_cc3200:
+                log.info("This is a CC3200 device")
+                cc.switch_to_nwp_bootloader()
+                log.info("APPS version: %s", cc.vinfo_apps)
 
-        if command.cmd == "read_file":
-            cc.read_file(command.cc_filename, command.local_file, command.file_id, command.inactive)
+        check_fat = False
 
-        if command.cmd == "erase_file":
-            log.info("Erasing file %s", command.filename)
-            cc.erase_file(command.filename)
+        for command in commands:
+            if command.cmd == "format_flash":
+                cc.format_slfs(command.size)
 
-        if command.cmd == "write_flash":
-            cc.write_flash(command.gang_image_file, not command.no_erase)
+            if command.cmd == 'write_file':
+                use_api = True
+                if not command.image_file is None and not command.output_file is None:
+                    use_api = False
+                    cc.copy_input_file_to_output_file()
 
-        if command.cmd == "read_flash":
-            cc.read_flash(command.dump_file, command.offset, command.size)
+                cc.write_file(command.local_file, command.cc_filename, command.file_id,
+                              command.signature, command.file_size,
+                              command.commit_flag, use_api)
+                check_fat = True
 
-        if command.cmd == "list_filesystem":
-            cc.list_filesystem(command.json_output, command.inactive, command.extended)
+            if command.cmd == "read_file":
+                cc.read_file(command.cc_filename, command.local_file, command.file_id, command.inactive)
 
-        if command.cmd == "read_all_files":
-            cc.read_all_files(command.local_dir, command.by_file_id, command.all_by_file_id, command.inactive)
+            if command.cmd == "erase_file":
+                log.info("Erasing file %s", command.filename)
+                cc.erase_file(command.filename)
 
-        if command.cmd == "write_all_files":
-            use_api = True
-            if not command.image_file is None and not command.output_file is None:
-                use_api = False
-                cc.copy_input_file_to_output_file()
-            cc.write_all_files(command.local_dir, command.simulate, use_api)
-            check_fat = True
+            if command.cmd == "write_flash":
+                cc.write_flash(command.gang_image_file, not command.no_erase)
 
-    if check_fat:
-        fat_info = cc.get_fat_info()  # check FAT after each write_file operation
-        fat_info.print_sffs_info_short()
+            if command.cmd == "read_flash":
+                cc.read_flash(command.dump_file, command.offset, command.size)
 
-    if args.reboot_to_app:
-        cc.reboot_to_app()
+            if command.cmd == "list_filesystem":
+                cc.list_filesystem(command.json_output, command.inactive, command.extended)
 
-    log.info("All commands done, bye.")
+            if command.cmd == "read_all_files":
+                cc.read_all_files(command.local_dir, command.by_file_id, command.all_by_file_id, command.inactive)
+
+            if command.cmd == "write_all_files":
+                use_api = True
+                if not command.image_file is None and not command.output_file is None:
+                    use_api = False
+                    cc.copy_input_file_to_output_file()
+                cc.write_all_files(command.local_dir, command.simulate, use_api)
+                check_fat = True
+
+        if check_fat:
+            fat_info = cc.get_fat_info()  # check FAT after each write_file operation
+            fat_info.print_sffs_info_short()
+
+        if args.reboot_to_app:
+            cc.reboot_to_app()
+
+        log.info("All commands done, bye.")
+
+    finally:
+        # please never do this in production
+        if args:
+            sys.exit = sys_backup
 
 
 if __name__ == '__main__':

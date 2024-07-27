@@ -37,8 +37,16 @@ It is likely that the issue is not present when running with the shown method (w
 
 ### Use as Library
 You can now import this and use as library. 
-Simply pass the command to the main() function and it will do the rest. 
-On failing a command it will raise an Exception with the corresponding error code instead of exiting the program.
+Simply pass the command to the main() function and it will do the rest.
+
+```
+main(args: list[str] = None, console: typing.Any = None, p_path: str = None)
+```
+
+Pass your normal command as a list of arguments in `args`, your custom logger as `console` and the file's path 
+relative to where the module gets imported in python syntax as `p_path`.
+
+On failing a command it will raise an Exception of type `ExitException` with the corresponding error code instead of exiting the program.
 You can now define the location from where the ddl files get loaded.
 You can also pass custom loggers for example to use with rich.
 
